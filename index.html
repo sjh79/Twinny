@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Twiny">
-<title>Twiny 3.16 — Suivi Africa Twin</title>
+<title>Twiny 3.17 — Suivi Africa Twin</title>
 <style>
   :root{
     --hrc-red:#8C2430;
@@ -100,41 +100,6 @@
   }
   .equip-modal h3{margin:0 26px 10px 0;font-family:'Oswald',sans-serif;font-size:18px;letter-spacing:0.3px;}
   .equip-modal .equip-body{font-size:13.5px;color:var(--ink-soft);line-height:1.5;min-height:40px;}
-
-  .calib-toggle{
-    position:fixed;right:14px;bottom:18px;z-index:220;
-    background:var(--hrc-blue);color:#fff;border:none;border-radius:20px;
-    padding:10px 16px;font-weight:700;font-size:13px;font-family:inherit;
-    box-shadow:0 6px 16px rgba(0,0,0,0.3);
-  }
-  .calib-toggle.active{background:var(--hrc-red);}
-
-  .calib-marker{
-    position:fixed;z-index:215;transform:translate(-50%,-50%);
-    width:26px;height:26px;border-radius:50%;
-    background:rgba(232,164,0,0.9);border:2px solid #fff;
-    display:flex;align-items:center;justify-content:center;
-    font-size:11px;font-weight:800;color:#14161B;
-    pointer-events:none;
-  }
-
-  .calib-panel{
-    position:fixed;left:12px;right:12px;z-index:220;
-    background:var(--panel);border-radius:16px;padding:12px 14px;
-    box-shadow:0 10px 30px rgba(0,0,0,0.35);
-    display:none;max-height:38vh;
-  }
-  .calib-panel.show{display:flex;flex-direction:column;gap:8px;}
-  .calib-panel-header{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;color:var(--ink);}
-  .calib-panel-close{background:none;border:none;font-size:14px;color:var(--ink-soft);}
-  .calib-list{font-size:11.5px;color:var(--ink-soft);overflow-y:auto;max-height:100px;font-family:monospace;}
-  .calib-list div{padding:2px 0;}
-  .calib-actions{display:flex;gap:8px;}
-  .calib-actions .btn-secondary{flex:1;font-size:12px;padding:8px 10px;}
-  .calib-output{
-    width:100%;border-radius:10px;border:1px solid var(--line);padding:8px;
-    font-family:monospace;font-size:10.5px;color:var(--ink);resize:none;box-sizing:border-box;
-  }
   .page{display:none;animation:fade .25s ease;}
   .page.active{display:block;}
   @keyframes fade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
@@ -400,20 +365,6 @@
   <section id="page-checklist" class="page">
   <div class="checklist-fullbg" id="checklistBg"></div>
   <div id="hotspotContainer"></div>
-  <div id="calibLayer"></div>
-  <button id="calibToggleBtn" class="calib-toggle">Calibrer</button>
-  <div id="calibPanel" class="calib-panel">
-    <div class="calib-panel-header">
-      <span>Points enregistrés</span>
-      <button id="calibCloseBtn" class="calib-panel-close">✕</button>
-    </div>
-    <div id="calibList" class="calib-list"></div>
-    <div class="calib-actions">
-      <button id="calibCopyBtn" class="btn-secondary">Copier</button>
-      <button id="calibClearBtn" class="btn-secondary">Effacer</button>
-    </div>
-    <textarea id="calibOutput" class="calib-output" readonly rows="3" placeholder="Touche la photo pour ajouter un point…"></textarea>
-  </div>
 </section>
 
 <div class="equip-overlay" id="equipOverlay">
@@ -591,6 +542,12 @@ odoInput.addEventListener("change", ()=>{ data.odometer = odoInput.value; saveDa
 const CHECKLIST_IMG_W = 1448;
 const CHECKLIST_IMG_H = 1086;
 
+// Cadrage spécifique iPhone (pas iPad) : la photo est agrandie et recadrée
+// pour remplir l'écran, avec le top case gardé à ~1mm du bord, dans les deux
+// orientations. Sur iPad le rendu original (photo entière, centrée) ne change pas.
+const isIphoneDevice = /iPhone/i.test(navigator.userAgent) && !/iPad/i.test(navigator.userAgent);
+const IPHONE_ZOOM = 1.3; // marge de zoom au-delà du "cover" pour pouvoir décaler le cadrage
+
 const EQUIP_ITEMS = [
   { id:"topcase", title:"Top case",                        xFrac:0.245, yFrac:0.104 },
   { id:"case-r",  title:"Valise latérale (côté droit)",     xFrac:0.310, yFrac:0.287 },
@@ -627,8 +584,31 @@ const EQUIP_ITEMS = [
     const containerW = rect.width;
     const containerH = rect.height;
     if(containerW === 0 || containerH === 0) return null;
-    // "contain" : on prend le plus petit ratio pour que la photo tienne entière
-    // dans l'écran, quitte à laisser un bord vide plutôt que de la rogner.
+
+    if(isIphoneDevice){
+      // iPhone uniquement : on zoome au-delà du "cover" (l'image remplit tout
+      // l'écran, sans bord vide) puis on décale horizontalement le cadrage
+      // pour que le top case reste à ~1mm du bord gauche de l'écran, que ce
+      // soit en profil (orientation) gauche ou droit — le calcul est refait
+      // à chaque resize/orientationchange donc il s'adapte automatiquement.
+      const marginPx = (1 / 25.4) * 96; // 1mm converti en pixels CSS (96px = 1 pouce)
+      const coverScale = Math.max(containerW / CHECKLIST_IMG_W, containerH / CHECKLIST_IMG_H);
+      const scale = coverScale * IPHONE_ZOOM;
+      const renderedW = CHECKLIST_IMG_W * scale;
+      const renderedH = CHECKLIST_IMG_H * scale;
+
+      const topcase = EQUIP_ITEMS.find(i => i.id === "topcase");
+      let offsetX = topcase ? (topcase.xFrac * renderedW) - marginPx : (renderedW - containerW) / 2;
+      offsetX = Math.max(0, Math.min(offsetX, renderedW - containerW));
+
+      let offsetY = (renderedH - containerH) / 2;
+      offsetY = Math.max(0, Math.min(offsetY, renderedH - containerH));
+
+      return {rect, renderedW, renderedH, offsetX, offsetY};
+    }
+
+    // iPad et autres appareils : comportement original inchangé ("contain"
+    // centré, la photo entière est visible sans être rognée).
     const scale = Math.min(containerW / CHECKLIST_IMG_W, containerH / CHECKLIST_IMG_H);
     const renderedW = CHECKLIST_IMG_W * scale;
     const renderedH = CHECKLIST_IMG_H * scale;
@@ -641,6 +621,13 @@ const EQUIP_ITEMS = [
   function positionHotspots(){
     const geom = getCoverGeometry();
     if(!geom) return;
+    if(isIphoneDevice){
+      // On applique le cadrage calculé directement sur la photo de fond
+      // (uniquement pour iPhone ; iPad garde son CSS "contain" d'origine).
+      bg.style.backgroundSize = geom.renderedW + "px " + geom.renderedH + "px";
+      bg.style.backgroundPosition = (-geom.offsetX) + "px " + (-geom.offsetY) + "px";
+      bg.style.backgroundRepeat = "no-repeat";
+    }
     EQUIP_ITEMS.forEach((item, i)=>{
       const screenX = geom.rect.left + (item.xFrac * geom.renderedW) - geom.offsetX;
       const screenY = geom.rect.top + (item.yFrac * geom.renderedH) - geom.offsetY;
@@ -666,109 +653,6 @@ const EQUIP_ITEMS = [
   window.positionHotspotsGlobal = positionHotspots;
   window.addEventListener("resize", positionHotspots);
   window.addEventListener("orientationchange", ()=>setTimeout(positionHotspots, 100));
-})();
-
-/* ---------------- CHECK LIST — mode calibrage ---------------- */
-(function(){
-  const toggleBtn = document.getElementById("calibToggleBtn");
-  const panel = document.getElementById("calibPanel");
-  const closeBtn = document.getElementById("calibCloseBtn");
-  const listEl = document.getElementById("calibList");
-  const outputEl = document.getElementById("calibOutput");
-  const copyBtn = document.getElementById("calibCopyBtn");
-  const clearBtn = document.getElementById("calibClearBtn");
-  const markerLayer = document.getElementById("calibLayer");
-  const bg = document.getElementById("checklistBg");
-  const checklistPage = document.getElementById("page-checklist");
-
-  let active = false;
-  let points = [];
-
-  function positionPanel(){
-    const topFixed = document.querySelector(".top-fixed");
-    if(!topFixed) return;
-    panel.style.top = (topFixed.getBoundingClientRect().bottom + 10) + "px";
-  }
-  positionPanel();
-  window.addEventListener("resize", positionPanel);
-  window.addEventListener("orientationchange", ()=>setTimeout(positionPanel, 100));
-
-  function renderMarkers(){
-    markerLayer.innerHTML = "";
-    points.forEach((p, i)=>{
-      const m = document.createElement("div");
-      m.className = "calib-marker";
-      m.style.left = p.screenX + "px";
-      m.style.top = p.screenY + "px";
-      m.textContent = i + 1;
-      markerLayer.appendChild(m);
-    });
-  }
-
-  function renderList(){
-    listEl.innerHTML = points.map((p, i)=>
-      `<div>Point ${i+1} — xFrac:${p.xFrac.toFixed(3)}, yFrac:${p.yFrac.toFixed(3)}</div>`
-    ).join("") || "<div>Aucun point pour l'instant.</div>";
-
-    outputEl.value = points.map((p, i)=>
-      `{ id:"point${i+1}", title:"", xFrac:${p.xFrac.toFixed(3)}, yFrac:${p.yFrac.toFixed(3)} },`
-    ).join("\n");
-  }
-
-  function addPoint(clientX, clientY){
-    const geom = window.getChecklistCoverGeometry ? window.getChecklistCoverGeometry() : null;
-    if(!geom) return;
-    const xFrac = (clientX - geom.rect.left + geom.offsetX) / geom.renderedW;
-    const yFrac = (clientY - geom.rect.top + geom.offsetY) / geom.renderedH;
-    points.push({xFrac, yFrac, screenX: clientX, screenY: clientY});
-    renderMarkers();
-    renderList();
-  }
-
-  bg.addEventListener("click", (e)=>{
-    if(!active) return;
-    addPoint(e.clientX, e.clientY);
-  });
-
-  toggleBtn.addEventListener("click", ()=>{
-    active = !active;
-    toggleBtn.classList.toggle("active", active);
-    toggleBtn.textContent = active ? "Calibrage ON" : "Calibrer";
-    panel.classList.toggle("show", active);
-    if(active) positionPanel();
-  });
-
-  closeBtn.addEventListener("click", ()=>{
-    active = false;
-    toggleBtn.classList.remove("active");
-    toggleBtn.textContent = "Calibrer";
-    panel.classList.remove("show");
-  });
-
-  clearBtn.addEventListener("click", ()=>{
-    points = [];
-    renderMarkers();
-    renderList();
-  });
-
-  copyBtn.addEventListener("click", async ()=>{
-    outputEl.select();
-    try{
-      await navigator.clipboard.writeText(outputEl.value);
-      showToast("Copié ✓");
-    }catch(e){
-      showToast("Sélectionné — copie manuelle si besoin");
-    }
-  });
-
-  // Recalcule l'affichage des repères si l'écran tourne ou change de taille
-  window.addEventListener("resize", ()=>{
-    points.forEach(p=>{
-      // les repères restent affichés là où on a tapé (position écran), pas besoin de recalcul
-    });
-  });
-
-  renderList();
 })();
 
 /* ---------------- RENDER CHECKLIST ---------------- */
