@@ -75,6 +75,14 @@
   .hotspot.is-placed{
     opacity:1;
   }
+  .checklist-pan-hint{
+    position:fixed;z-index:3;left:50%;bottom:18px;transform:translateX(-50%);
+    background:rgba(0,0,0,0.6);color:#fff;font-size:12px;
+    padding:7px 14px;border-radius:20px;
+    opacity:0;pointer-events:none;transition:opacity .3s ease;
+    white-space:nowrap;
+  }
+  .checklist-pan-hint.show{ opacity:1; }
   .hotspot::after{
     content:"";width:8px;height:8px;border-radius:50%;background:#fff;
     box-shadow:0 0 0 4px rgba(232,164,0,0.0);
@@ -370,6 +378,7 @@
   <section id="page-checklist" class="page">
   <div class="checklist-fullbg" id="checklistBg"></div>
   <div id="hotspotContainer"></div>
+  <div class="checklist-pan-hint" id="checklistPanHint">Glissez la photo pour la déplacer</div>
 </section>
 
 <div class="equip-overlay" id="equipOverlay">
@@ -551,7 +560,7 @@ const CHECKLIST_IMG_H = 1086;
 // pour remplir l'écran, avec le top case gardé à ~1mm du bord, dans les deux
 // orientations. Sur iPad le rendu original (photo entière, centrée) ne change pas.
 const isIphoneDevice = /iPhone/i.test(navigator.userAgent) && !/iPad/i.test(navigator.userAgent);
-const IPHONE_ZOOM = 1.105; // marge de zoom au-delà du "cover" pour pouvoir décaler le cadrage (réduit de 15% par rapport à 1.3)
+const IPHONE_ZOOM = 0.995; // marge de zoom au-delà du "cover" (réduit de 10% par rapport à 1.105)
 
 const EQUIP_ITEMS = [
   { id:"topcase", title:"Top case",                        xFrac:0.245, yFrac:0.104 },
@@ -584,6 +593,23 @@ const EQUIP_ITEMS = [
 
   // Reproduit le calcul de "background-size:cover" pour replacer chaque point
   // exactement sur le bon pixel de la photo, quelle que soit la taille de l'écran.
+  function clampOffset(value, renderedDim, containerDim){
+    // Plage valide pour un décalage d'image : normalement [0, renderedDim-containerDim].
+    // Si la photo est désormais plus petite que l'écran sur cet axe (zoom réduit),
+    // cette borne devient négative : on l'autorise pour permettre un léger
+    // "padding" au lieu de forcer un débordement.
+    const maxOffset = renderedDim - containerDim;
+    const lo = Math.min(0, maxOffset);
+    const hi = Math.max(0, maxOffset);
+    return Math.max(lo, Math.min(value, hi));
+  }
+
+  // Décalage manuel appliqué par l'utilisateur en faisant glisser la photo au
+  // doigt (iPhone uniquement, utile surtout en paysage où le cadrage auto peut
+  // laisser une partie hors écran). Réinitialisé à chaque rotation.
+  let panOffsetX = 0, panOffsetY = 0;
+  let lastGeom = null;
+
   function getCoverGeometry(){
     const rect = bg.getBoundingClientRect();
     const containerW = rect.width;
@@ -604,10 +630,10 @@ const EQUIP_ITEMS = [
 
       const topcase = EQUIP_ITEMS.find(i => i.id === "topcase");
       let offsetX = topcase ? (topcase.xFrac * renderedW) - marginPx : (renderedW - containerW) / 2;
-      offsetX = Math.max(0, Math.min(offsetX, renderedW - containerW));
+      offsetX = clampOffset(offsetX + panOffsetX, renderedW, containerW);
 
       let offsetY = (renderedH - containerH) / 2;
-      offsetY = Math.max(0, Math.min(offsetY, renderedH - containerH));
+      offsetY = clampOffset(offsetY + panOffsetY, renderedH, containerH);
 
       return {rect, renderedW, renderedH, offsetX, offsetY};
     }
@@ -625,6 +651,7 @@ const EQUIP_ITEMS = [
 
   function positionHotspots(){
     const geom = getCoverGeometry();
+    lastGeom = geom;
     if(!geom){
       // La section n'est pas encore visible/mise en page (ex: onglet caché,
       // premier rendu) : on masque les points plutôt que de les laisser
@@ -663,9 +690,9 @@ const EQUIP_ITEMS = [
   overlay.addEventListener("click", (e)=>{ if(e.target === overlay) closeEquip(); });
 
   renderHotspots();
-  window.positionHotspotsGlobal = positionHotspots;
-  window.addEventListener("resize", positionHotspots);
-  window.addEventListener("orientationchange", ()=>setTimeout(positionHotspots, 100));
+  window.positionHotspotsGlobal = ()=> positionHotspots();
+  window.addEventListener("resize", ()=> positionHotspots());
+  window.addEventListener("orientationchange", ()=>setTimeout(()=> positionHotspots(), 100));
 
   // Filet de sécurité principal : tant que l'onglet "Check list" est masqué
   // (ou pas encore mis en page), bg fait 0x0 et les hotspots restent cachés.
@@ -675,6 +702,69 @@ const EQUIP_ITEMS = [
   if(window.ResizeObserver){
     const ro = new ResizeObserver(()=> positionHotspots());
     ro.observe(bg);
+  }
+
+  // ---- Glisser la photo au doigt (iPhone uniquement) ----
+  // Le cadrage auto (topcase à 1mm du bord) ne suffit pas toujours en
+  // paysage : on permet donc de repositionner la photo manuellement au doigt.
+  if(isIphoneDevice){
+    const panHint = document.getElementById("checklistPanHint");
+    let dragging = false;
+    let startX = 0, startY = 0, startPanX = 0, startPanY = 0;
+    let hintTimer = null;
+
+    function showPanHint(){
+      if(!panHint) return;
+      panHint.classList.add("show");
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(()=> panHint.classList.remove("show"), 2500);
+    }
+
+    bg.addEventListener("touchstart", (e)=>{
+      if(!lastGeom || e.touches.length !== 1) return;
+      dragging = true;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      startPanX = panOffsetX;
+      startPanY = panOffsetY;
+      showPanHint();
+    }, {passive:true});
+
+    bg.addEventListener("touchmove", (e)=>{
+      if(!dragging || !lastGeom || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - startX;
+      const dy = e.touches[0].clientY - startY;
+      panOffsetX = startPanX - dx;
+      panOffsetY = startPanY - dy;
+      positionHotspots();
+      e.preventDefault();
+    }, {passive:false});
+
+    ["touchend","touchcancel"].forEach(evt=>{
+      bg.addEventListener(evt, ()=>{ dragging = false; }, {passive:true});
+    });
+
+    // On montre le hint dès que la photo est repositionnée avec succès pour
+    // la première fois (onglet qui s'affiche, rotation...), afin d'indiquer
+    // qu'elle peut être déplacée au doigt.
+    let hintShownOnce = false;
+    const originalPositionHotspots = positionHotspots;
+    positionHotspots = function(){
+      originalPositionHotspots();
+      if(lastGeom && !hintShownOnce){
+        hintShownOnce = true;
+        showPanHint();
+      }
+    };
+    window.positionHotspotsGlobal = positionHotspots;
+
+    // On réinitialise le décalage manuel à chaque rotation, puisque le
+    // cadrage automatique est recalculé pour la nouvelle orientation.
+    window.addEventListener("orientationchange", ()=>{
+      panOffsetX = 0;
+      panOffsetY = 0;
+      hintShownOnce = false;
+    });
   }
 })();
 
