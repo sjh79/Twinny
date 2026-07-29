@@ -634,8 +634,9 @@ const EQUIP_ITEMS = [
       const topcase = EQUIP_ITEMS.find(i => i.id === "topcase");
       const panX = isPortrait ? 0 : panOffsetX; // portrait : image verrouillée, aucun glissement pris en compte
       const panY = isPortrait ? 0 : panOffsetY;
+      const portraitShiftRightPx = isPortrait ? (3 / 25.4) * 96 : 0; // décale l'image de 3mm vers la droite (portrait uniquement)
       let offsetX = topcase ? (topcase.xFrac * renderedW) - marginPx : (renderedW - containerW) / 2;
-      offsetX = clampOffset(offsetX + panX, renderedW, containerW);
+      offsetX = clampOffset(offsetX + panX - portraitShiftRightPx, renderedW, containerW);
 
       let offsetY = (renderedH - containerH) / 2;
       offsetY = clampOffset(offsetY + panY, renderedH, containerH);
