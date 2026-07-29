@@ -632,11 +632,13 @@ const EQUIP_ITEMS = [
       const renderedH = CHECKLIST_IMG_H * scale;
 
       const topcase = EQUIP_ITEMS.find(i => i.id === "topcase");
+      const panX = isPortrait ? 0 : panOffsetX; // portrait : image verrouillée, aucun glissement pris en compte
+      const panY = isPortrait ? 0 : panOffsetY;
       let offsetX = topcase ? (topcase.xFrac * renderedW) - marginPx : (renderedW - containerW) / 2;
-      offsetX = clampOffset(offsetX + panOffsetX, renderedW, containerW);
+      offsetX = clampOffset(offsetX + panX, renderedW, containerW);
 
       let offsetY = (renderedH - containerH) / 2;
-      offsetY = clampOffset(offsetY + panOffsetY, renderedH, containerH);
+      offsetY = clampOffset(offsetY + panY, renderedH, containerH);
 
       return {rect, renderedW, renderedH, offsetX, offsetY};
     }
@@ -725,6 +727,8 @@ const EQUIP_ITEMS = [
 
     bg.addEventListener("touchstart", (e)=>{
       if(!lastGeom || e.touches.length !== 1) return;
+      // Portrait : image verrouillée sur le cadrage automatique, pas de glissement.
+      if(lastGeom.rect.height > lastGeom.rect.width) return;
       dragging = true;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
@@ -754,7 +758,7 @@ const EQUIP_ITEMS = [
     const originalPositionHotspots = positionHotspots;
     positionHotspots = function(){
       originalPositionHotspots();
-      if(lastGeom && !hintShownOnce){
+      if(lastGeom && !hintShownOnce && lastGeom.rect.width > lastGeom.rect.height){
         hintShownOnce = true;
         showPanHint();
       }
