@@ -69,6 +69,11 @@
     display:flex;align-items:center;justify-content:center;
     transform:translate(-50%,-50%);
     box-shadow:0 0 0 6px rgba(255,255,255,0.15);
+    opacity:0;
+    transition:opacity .18s ease;
+  }
+  .hotspot.is-placed{
+    opacity:1;
   }
   .hotspot::after{
     content:"";width:8px;height:8px;border-radius:50%;background:#fff;
@@ -546,7 +551,7 @@ const CHECKLIST_IMG_H = 1086;
 // pour remplir l'écran, avec le top case gardé à ~1mm du bord, dans les deux
 // orientations. Sur iPad le rendu original (photo entière, centrée) ne change pas.
 const isIphoneDevice = /iPhone/i.test(navigator.userAgent) && !/iPad/i.test(navigator.userAgent);
-const IPHONE_ZOOM = 1.3; // marge de zoom au-delà du "cover" pour pouvoir décaler le cadrage
+const IPHONE_ZOOM = 1.105; // marge de zoom au-delà du "cover" pour pouvoir décaler le cadrage (réduit de 15% par rapport à 1.3)
 
 const EQUIP_ITEMS = [
   { id:"topcase", title:"Top case",                        xFrac:0.245, yFrac:0.104 },
@@ -620,7 +625,14 @@ const EQUIP_ITEMS = [
 
   function positionHotspots(){
     const geom = getCoverGeometry();
-    if(!geom) return;
+    if(!geom){
+      // La section n'est pas encore visible/mise en page (ex: onglet caché,
+      // premier rendu) : on masque les points plutôt que de les laisser
+      // empilés en haut à gauche. Le ResizeObserver ci-dessous rappellera
+      // cette fonction dès que la taille réelle sera connue.
+      hotspotEls.forEach(el => el.classList.remove("is-placed"));
+      return;
+    }
     if(isIphoneDevice){
       // On applique le cadrage calculé directement sur la photo de fond
       // (uniquement pour iPhone ; iPad garde son CSS "contain" d'origine).
@@ -633,6 +645,7 @@ const EQUIP_ITEMS = [
       const screenY = geom.rect.top + (item.yFrac * geom.renderedH) - geom.offsetY;
       hotspotEls[i].style.left = screenX + "px";
       hotspotEls[i].style.top = screenY + "px";
+      hotspotEls[i].classList.add("is-placed");
     });
   }
 
@@ -653,6 +666,16 @@ const EQUIP_ITEMS = [
   window.positionHotspotsGlobal = positionHotspots;
   window.addEventListener("resize", positionHotspots);
   window.addEventListener("orientationchange", ()=>setTimeout(positionHotspots, 100));
+
+  // Filet de sécurité principal : tant que l'onglet "Check list" est masqué
+  // (ou pas encore mis en page), bg fait 0x0 et les hotspots restent cachés.
+  // Le ResizeObserver détecte le passage à la vraie taille (affichage de
+  // l'onglet, rotation, etc.) et repositionne automatiquement, sans avoir
+  // besoin de rafraîchir la page.
+  if(window.ResizeObserver){
+    const ro = new ResizeObserver(()=> positionHotspots());
+    ro.observe(bg);
+  }
 })();
 
 /* ---------------- RENDER CHECKLIST ---------------- */
