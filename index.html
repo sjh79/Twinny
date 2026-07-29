@@ -560,7 +560,8 @@ const CHECKLIST_IMG_H = 1086;
 // pour remplir l'écran, avec le top case gardé à ~1mm du bord, dans les deux
 // orientations. Sur iPad le rendu original (photo entière, centrée) ne change pas.
 const isIphoneDevice = /iPhone/i.test(navigator.userAgent) && !/iPad/i.test(navigator.userAgent);
-const IPHONE_ZOOM = 0.995; // marge de zoom au-delà du "cover" (réduit de 10% par rapport à 1.105)
+const IPHONE_ZOOM_LANDSCAPE = 0.995; // paysage : inchangé
+const IPHONE_ZOOM_PORTRAIT = 0.8955; // portrait uniquement : réduit de 10% supplémentaires par rapport au paysage
 
 const EQUIP_ITEMS = [
   { id:"topcase", title:"Top case",                        xFrac:0.245, yFrac:0.104 },
@@ -624,7 +625,9 @@ const EQUIP_ITEMS = [
       // à chaque resize/orientationchange donc il s'adapte automatiquement.
       const marginPx = (1 / 25.4) * 96; // 1mm converti en pixels CSS (96px = 1 pouce)
       const coverScale = Math.max(containerW / CHECKLIST_IMG_W, containerH / CHECKLIST_IMG_H);
-      const scale = coverScale * IPHONE_ZOOM;
+      const isPortrait = containerH > containerW;
+      const zoomFactor = isPortrait ? IPHONE_ZOOM_PORTRAIT : IPHONE_ZOOM_LANDSCAPE;
+      const scale = coverScale * zoomFactor;
       const renderedW = CHECKLIST_IMG_W * scale;
       const renderedH = CHECKLIST_IMG_H * scale;
 
