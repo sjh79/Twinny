@@ -112,7 +112,33 @@
     font-size:16px;color:var(--ink-soft);
   }
   .equip-modal h3{margin:0 26px 10px 0;font-family:'Oswald',sans-serif;font-size:18px;letter-spacing:0.3px;}
-  .equip-modal .equip-body{font-size:13.5px;color:var(--ink-soft);line-height:1.5;min-height:40px;}
+  .equip-modal .equip-body{font-size:13.5px;color:var(--ink-soft);line-height:1.5;}
+  .equip-modal .equip-body:empty{display:none;}
+  .equip-list{
+    list-style:none;margin:0;padding:0;
+    display:flex;flex-direction:column;gap:7px;
+  }
+  .equip-list li{
+    display:flex;align-items:center;gap:10px;
+    font-size:13.5px;color:var(--ink);
+    padding:9px 11px;border-radius:11px;
+    background:var(--bg);border:1px solid var(--line);
+  }
+  .equip-list li.checked span{
+    color:var(--ink-soft);text-decoration:line-through;opacity:0.7;
+  }
+  .equip-check{
+    flex:0 0 auto;width:22px;height:22px;border-radius:50%;
+    padding:0;margin:0;cursor:pointer;position:relative;
+    background:transparent;border:2px solid var(--line);
+    transition:border-color .15s ease;
+  }
+  .equip-check::after{
+    content:"";position:absolute;inset:4px;border-radius:50%;
+    background:transparent;transition:background .15s ease;
+  }
+  .equip-check.checked{ border-color:var(--ok); }
+  .equip-check.checked::after{ background:var(--ok); }
   .page{display:none;animation:fade .25s ease;}
   .page.active{display:block;}
   @keyframes fade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
@@ -479,12 +505,13 @@ const ITEMS = [
 function defaultData(){
   const items = {};
   ITEMS.forEach(i => items[i.id] = {history:[], interval: i.interval ? {...i.interval} : null});
-  return {odometer:"", items};
+  return {odometer:"", items, equipChecklist:{}};
 }
 
 /* Complète les données déjà sauvegardées si un point n'a pas encore d'intervalle défini
    (ex : mise à jour de l'app qui ajoute des rappels sur des points qui n'en avaient pas) */
 function migrateData(d){
+  if(!d.equipChecklist) d.equipChecklist = {};
   ITEMS.forEach(i=>{
     if(!d.items[i.id]) d.items[i.id] = {history:[], interval: i.interval ? {...i.interval} : null};
     else if((d.items[i.id].interval === null || d.items[i.id].interval === undefined) && i.interval){
@@ -566,10 +593,88 @@ const IPHONE_ZOOM_PORTRAIT = 0.8955; // portrait uniquement : réduit de 10% sup
 const EQUIP_ITEMS = [
   { id:"topcase", title:"Top case",                        xFrac:0.245, yFrac:0.104 },
   { id:"case-r",  title:"Valise latérale (côté droit)",     xFrac:0.310, yFrac:0.287 },
+  { id:"toiletry", title:"Trousse de toilette",             xFrac:0.3036, yFrac:0.0911 },
   { id:"bag",     title:"Sac (crash bar avant droit)",      xFrac:0.621, yFrac:0.343 },
   { id:"case-l",  title:"Valise latérale (côté gauche)",    xFrac:0.639, yFrac:0.743 },
+  { id:"vrac",    title:"Vrac",                             xFrac:0.639, yFrac:0.6386 },
   { id:"bottle",  title:"Gourde (crash bar avant gauche)",  xFrac:0.417, yFrac:0.799 },
 ];
+
+// Contenu affiché dans la fenêtre de chaque point cliquable. Un point sans
+// entrée ici garde le texte par défaut ("À compléter.").
+const EQUIP_CONTENT = {
+  bottle: { list: [
+    "Gourde",
+  ]},
+  bag: { list: [
+    "Bombe anti-crevaison",
+    "Kit de secours",
+    "Mouchoirs",
+    "Gilet jaune",
+    "Outils",
+    "Lampe",
+    "Barres de céréales",
+  ]},
+  "case-r": { list: [
+    "Sèche-chaussures",
+    "Febreze",
+    "iPad",
+    "Tondeuse",
+    "Chargeur brosse à dents",
+    "Multiprise",
+    "Batterie + câble",
+    "Chargeur",
+    "Produit visière",
+    "Microfibre",
+    "Basket",
+  ]},
+  "case-l": { list: [
+    "Nettoyant chaîne",
+    "Brosse à chaîne + support bombe",
+    "Graisse à chaîne",
+    "Journal + gants x8",
+    "Essuie-main",
+    "Sac inter x2",
+    "Gants hiver",
+    "Cale en bois",
+    "Bouteille vide",
+    "Sous-veste pluie",
+  ]},
+  topcase: { list: [
+    "Ceinture lombaire",
+    "Trousse de toilette",
+    "Sous-vêtement",
+    "Chaussette invisible",
+    "Tong",
+    "Cache-cou",
+    "Casquette",
+    "T-shirt soir",
+    "T-shirt moto",
+    "Short",
+    "Pantalon rouge",
+    "Polaire",
+    "Chaussette",
+    "Sac linge sale",
+  ]},
+  vrac: { list: [
+    "3 antivols",
+    "Serviette",
+    "Vaporisateur",
+  ]},
+  toiletry: { list: [
+    "Produit lentille",
+    "Lentilles x1",
+    "Lunette + étui",
+    "Médocs tension",
+    "Brosse à dent",
+    "Dentifrice",
+    "Bouchon d'oreille",
+    "Stick anti-irritation",
+    "Vaseline",
+    "Voltaren + Myocalm",
+    "Nurofen + Myocalm",
+  ]},
+};
 
 (function(){
   const container = document.getElementById("hotspotContainer");
@@ -682,11 +787,44 @@ const EQUIP_ITEMS = [
     });
   }
 
+  function renderEquipList(id, items){
+    if(!data.equipChecklist) data.equipChecklist = {};
+    if(!Array.isArray(data.equipChecklist[id])) data.equipChecklist[id] = items.map(()=>false);
+    const state = data.equipChecklist[id];
+    // Si la liste a changé de longueur (mise à jour de l'app), on ajuste sans perdre l'existant.
+    while(state.length < items.length) state.push(false);
+    state.length = items.length;
+
+    bodyEl.innerHTML = '<ul class="equip-list">' + items.map((label, idx)=>{
+      const isChecked = !!state[idx];
+      return `<li class="${isChecked ? "checked" : ""}">`
+        + `<button type="button" class="equip-check${isChecked ? " checked" : ""}" data-idx="${idx}" aria-label="Marquer ${label} comme prêt"></button>`
+        + `<span>${label}</span>`
+        + `</li>`;
+    }).join("") + '</ul>';
+
+    bodyEl.querySelectorAll(".equip-check").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const idx = Number(btn.dataset.idx);
+        const nowChecked = !data.equipChecklist[id][idx];
+        data.equipChecklist[id][idx] = nowChecked;
+        btn.classList.toggle("checked", nowChecked);
+        btn.closest("li").classList.toggle("checked", nowChecked);
+        saveData();
+      });
+    });
+  }
+
   function openEquip(id){
     const item = EQUIP_ITEMS.find(i=>i.id === id);
     if(!item) return;
     titleEl.textContent = item.title;
-    bodyEl.textContent = "À compléter.";
+    const content = EQUIP_CONTENT[id];
+    if(content && content.list){
+      renderEquipList(id, content.list);
+    } else {
+      bodyEl.textContent = "À compléter.";
+    }
     overlay.classList.add("show");
   }
 
