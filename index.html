@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Twiny">
-<title>Twiny 3.17 — Suivi Africa Twin</title>
+<title>Twiny 4.6 — Suivi Africa Twin</title>
 <style>
   :root{
     --hrc-red:#8C2430;
@@ -505,13 +505,14 @@ const ITEMS = [
 function defaultData(){
   const items = {};
   ITEMS.forEach(i => items[i.id] = {history:[], interval: i.interval ? {...i.interval} : null});
-  return {odometer:"", items, equipChecklist:{}};
+  return {odometer:"", items, equipChecklist:{}, updatedAt: 0};
 }
 
 /* Complète les données déjà sauvegardées si un point n'a pas encore d'intervalle défini
    (ex : mise à jour de l'app qui ajoute des rappels sur des points qui n'en avaient pas) */
 function migrateData(d){
   if(!d.equipChecklist) d.equipChecklist = {};
+  if(typeof d.updatedAt !== "number") d.updatedAt = 0;
   ITEMS.forEach(i=>{
     if(!d.items[i.id]) d.items[i.id] = {history:[], interval: i.interval ? {...i.interval} : null};
     else if((d.items[i.id].interval === null || d.items[i.id].interval === undefined) && i.interval){
@@ -530,13 +531,18 @@ function loadData(){
 }
 
 let data = migrateData(loadData());
-function saveData(){
+/* bumpTimestamp=false est utilisé uniquement quand on vient d'appliquer une donnée
+   reçue de Google Drive : on garde alors l'horodatage d'origine (celui de l'appareil
+   qui a fait la modification) plutôt que de le remplacer par "maintenant", et on ne
+   relance pas un envoi vers Drive puisque c'est exactement ce qu'on vient de recevoir. */
+function saveData(bumpTimestamp){
+  if(bumpTimestamp !== false) data.updatedAt = Date.now();
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   }catch(e){
     showToast("Erreur d'enregistrement, réessaie");
   }
-  if(typeof scheduleDriveSync === "function") scheduleDriveSync();
+  if(bumpTimestamp !== false && typeof scheduleDriveSync === "function") scheduleDriveSync();
 }
 
 function todayISO(){ return new Date().toISOString().slice(0,10); }
@@ -1481,7 +1487,7 @@ async function driveSyncNow(showToasts){
     const token = await getDriveToken();
     let documents = [];
     try{ if(docDB) documents = await docGetAll(); }catch(e){}
-    await driveUpload(token, {version: 2, data, documents});
+    await driveUpload(token, {version: 3, data, documents});
     setDriveStatus("Connecté ✓ — dernière synchro : " + new Date().toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"}));
     if(showToasts) showToast("Synchronisé avec Google Drive ✓");
   }catch(err){
@@ -1508,17 +1514,26 @@ async function connectDrive(interactive){
     if(existing){
       driveFileId = existing.id;
       const remote = await driveDownload(token, existing.id);
-      const remoteData = remote.version === 2 ? remote.data : remote;
-      const remoteDocs = remote.version === 2 ? (remote.documents || []) : [];
-      const localHasData = data.odometer || Object.values(data.items).some(i => i.history.length > 0);
+      const remoteData = (remote.version === 2 || remote.version === 3) ? remote.data : remote;
+      const remoteDocs = (remote.version === 2 || remote.version === 3) ? (remote.documents || []) : [];
 
-      if(localHasData && interactive){
-        const useRemote = confirm(
-          "Une sauvegarde existe déjà sur Google Drive.\n\nOK = charger celle de Google Drive (remplace les données locales)\nAnnuler = garder les données de cet appareil et les envoyer sur Drive"
-        );
-        if(useRemote && remoteData && remoteData.items){
+      if(remoteData && remoteData.items){
+        const localUpdatedAt = data.updatedAt || 0;
+        const remoteUpdatedAt = remoteData.updatedAt || 0;
+        const localHasData = data.odometer || Object.values(data.items).some(i => i.history.length > 0);
+        const remoteHasData = remoteData.odometer || Object.values(remoteData.items).some(i => i.history && i.history.length > 0);
+
+        /* Une seule sauvegarde fait référence : celle avec l'horodatage le plus récent.
+           - Si Drive est plus récent (modifié depuis l'autre appareil), on l'applique ici.
+           - Si cet appareil n'a encore aucune donnée locale mais que Drive en a, on la charge
+             aussi (cas du premier lancement sur un nouvel appareil).
+           - Sinon, cet appareil est à jour ou plus récent : rien à charger, driveSyncNow
+             ci-dessous se charge d'envoyer la version locale si besoin. */
+        const shouldPullRemote = remoteUpdatedAt > localUpdatedAt || (!localHasData && remoteHasData);
+
+        if(shouldPullRemote){
           data = migrateData(remoteData);
-          saveData();
+          saveData(false); // on garde l'horodatage d'origine, pas de ré-envoi immédiat vers Drive
           odoInput.value = data.odometer || "";
           renderItems();
           updateHomeStats();
@@ -1527,17 +1542,7 @@ async function connectDrive(interactive){
             for(const doc of remoteDocs) await docPut(doc);
             renderDocuments();
           }
-        }
-      } else if(!localHasData && remoteData && remoteData.items){
-        data = migrateData(remoteData);
-        saveData();
-        odoInput.value = data.odometer || "";
-        renderItems();
-        updateHomeStats();
-        renderSettings();
-        if(remoteDocs.length && docDB){
-          for(const doc of remoteDocs) await docPut(doc);
-          renderDocuments();
+          if(interactive) showToast("Dernière sauvegarde Google Drive chargée ✓");
         }
       }
     }
@@ -1582,7 +1587,7 @@ document.getElementById("exportBtn").addEventListener("click", async ()=>{
     showToast("Documents non inclus (erreur de lecture)");
   }
 
-  const payload = JSON.stringify({version: 2, data, documents}, null, 2);
+  const payload = JSON.stringify({version: 3, data, documents}, null, 2);
   const blob = new Blob([payload], {type:"application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1609,9 +1614,10 @@ document.getElementById("importInput").addEventListener("change", (e)=>{
       }
 
       // Compatible avec l'ancien format (juste les données d'entretien)
-      // et le nouveau format (données + documents).
-      const importedData = imported.version === 2 ? imported.data : imported;
-      const importedDocs = imported.version === 2 ? (imported.documents || []) : [];
+      // et le nouveau format (données + documents, versions 2 et 3).
+      const isNewFormat = imported.version === 2 || imported.version === 3;
+      const importedData = isNewFormat ? imported.data : imported;
+      const importedDocs = isNewFormat ? (imported.documents || []) : [];
 
       if(!importedData || !importedData.items){
         showToast("Fichier invalide");
@@ -1619,7 +1625,9 @@ document.getElementById("importInput").addEventListener("change", (e)=>{
       }
 
       data = migrateData(importedData);
-      saveData();
+      // Un import manuel est une action volontaire : on la traite comme la donnée
+      // la plus récente pour que Drive et l'autre appareil s'alignent dessus.
+      saveData(true);
       odoInput.value = data.odometer || "";
       renderItems();
       updateHomeStats();
