@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Twiny">
-<title>Twiny 5.2 — Suivi Africa Twin</title>
+<title>Twiny 5.3 — Suivi Africa Twin</title>
 <style>
   :root{
     --hrc-red:#8C2430;
@@ -203,6 +203,27 @@
   .cl-mgmt-row:last-child{border-bottom:none;}
   .cl-mgmt-row .lbl{font-size:14px;font-weight:600;flex:1;min-width:0;}
   .cl-mgmt-row select{padding:8px 9px;border-radius:9px;border:1px solid var(--line);background:#FAFAF8;font-size:12.5px;font-family:inherit;color:var(--ink);flex:0 0 auto;max-width:52%;}
+
+  .cl-mgmt-item{position:relative;overflow:hidden;border-bottom:1px solid var(--line);}
+  .cl-mgmt-item:last-of-type{border-bottom:none;}
+  .cl-mgmt-item .cl-mgmt-row{
+    position:relative;z-index:1;background:var(--panel);
+    padding:11px 0;border-bottom:none;margin:0;
+    touch-action:pan-y;will-change:transform;
+  }
+  .cl-mgmt-actions{
+    position:absolute;top:0;right:0;bottom:0;display:flex;z-index:0;
+  }
+  .cl-mgmt-actions button{
+    width:76px;border:none;color:#fff;font-size:12px;font-weight:700;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    font-family:inherit;
+  }
+  .cl-mgmt-actions button svg{width:17px;height:17px;stroke:#fff;fill:none;stroke-width:2.2;}
+  .cl-mgmt-edit-btn{background:#2E9E4F;}
+  .cl-mgmt-edit-btn:active{background:#278a44;}
+  .cl-mgmt-delete-btn{background:#D8453B;}
+  .cl-mgmt-delete-btn:active{background:#c03c33;}
 
   .cl-mgmt-add{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
   .cl-mgmt-add .field{margin-bottom:10px;}
@@ -1002,6 +1023,12 @@ ensureEquipItems();
    visible ensuite dans l'onglet "Check list" (photo avec points cliquables). */
 const checklistMgmtOverlay = document.getElementById("checklistMgmtOverlay");
 const checklistMgmtList = document.getElementById("checklistMgmtList");
+// Un tap en dehors de la ligne actuellement ouverte (glissée) la referme,
+// sauf si le tap est sur "Modifier"/"Supprimer" eux-mêmes.
+checklistMgmtList.addEventListener("click", (e)=>{
+  if(!clMgmtOpenItem) return;
+  if(!clMgmtOpenItem.contains(e.target)) clMgmtCloseItem(clMgmtOpenItem);
+});
 
 function equipLocationsSorted(){
   return EQUIP_ITEMS.slice().sort((a,b)=> a.title.localeCompare(b.title, "fr", {sensitivity:"base"}));
@@ -1013,15 +1040,107 @@ function locationOptionsHTML(locations, selectedId){
   ).join("");
 }
 
+/* Glissement vers la gauche sur une ligne (comme Outlook) pour révéler
+   "Modifier" (vert) et "Supprimer" (rouge). Basé sur les Pointer Events,
+   qui couvrent aussi bien le tactile que la souris. */
+const CL_MGMT_ACTIONS_WIDTH = 152; // doit correspondre à 2 x largeur des boutons en CSS
+let clMgmtOpenItem = null;
+
+function clMgmtGetTranslateX(el){
+  const t = getComputedStyle(el).transform;
+  if(t === "none") return 0;
+  const m = t.match(/matrix\(([^)]+)\)/);
+  if(!m) return 0;
+  const parts = m[1].split(",").map(Number);
+  return parts[4] || 0;
+}
+
+function clMgmtCloseItem(itemEl){
+  if(!itemEl) return;
+  const row = itemEl.querySelector(".cl-mgmt-row");
+  row.style.transition = "transform .2s ease";
+  row.style.transform = "translateX(0px)";
+  itemEl.classList.remove("swiped");
+  if(clMgmtOpenItem === itemEl) clMgmtOpenItem = null;
+}
+
+function clMgmtOpenItemFn(itemEl){
+  if(clMgmtOpenItem && clMgmtOpenItem !== itemEl) clMgmtCloseItem(clMgmtOpenItem);
+  const row = itemEl.querySelector(".cl-mgmt-row");
+  row.style.transition = "transform .2s ease";
+  row.style.transform = `translateX(-${CL_MGMT_ACTIONS_WIDTH}px)`;
+  itemEl.classList.add("swiped");
+  clMgmtOpenItem = itemEl;
+}
+
+function attachSwipeHandlers(itemEl){
+  const row = itemEl.querySelector(".cl-mgmt-row");
+  let startX = 0, startY = 0, startTranslate = 0, dragging = false, isHorizontal = null;
+
+  row.addEventListener("pointerdown", (e)=>{
+    if(e.target.closest("select")) return; // laisse le menu déroulant fonctionner normalement
+    dragging = true; isHorizontal = null;
+    startX = e.clientX; startY = e.clientY;
+    startTranslate = clMgmtGetTranslateX(row);
+    row.style.transition = "none";
+  });
+
+  row.addEventListener("pointermove", (e)=>{
+    if(!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if(isHorizontal === null){
+      if(Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+      isHorizontal = Math.abs(dx) > Math.abs(dy);
+      if(isHorizontal) row.setPointerCapture(e.pointerId);
+      else { dragging = false; return; } // scroll vertical : on laisse la page défiler
+    }
+    e.preventDefault();
+    let next = startTranslate + dx;
+    next = Math.max(-CL_MGMT_ACTIONS_WIDTH, Math.min(0, next));
+    row.style.transform = `translateX(${next}px)`;
+  });
+
+  function endDrag(e){
+    if(!dragging) return;
+    dragging = false;
+    row.style.transition = "transform .2s ease";
+    if(isHorizontal){
+      const current = clMgmtGetTranslateX(row);
+      if(current < -CL_MGMT_ACTIONS_WIDTH / 2) clMgmtOpenItemFn(itemEl);
+      else clMgmtCloseItem(itemEl);
+    } else if(itemEl.classList.contains("swiped")){
+      // Simple tap sur une ligne déjà ouverte : la referme.
+      clMgmtCloseItem(itemEl);
+    }
+    isHorizontal = null;
+  }
+  row.addEventListener("pointerup", endDrag);
+  row.addEventListener("pointercancel", endDrag);
+}
+
 function renderChecklistMgmt(){
+  clMgmtOpenItem = null; // le DOM est reconstruit, les anciennes références ne sont plus valables
   const locations = equipLocationsSorted();
   const items = data.equipItems.slice().sort((a,b)=> a.name.localeCompare(b.name, "fr", {sensitivity:"base"}));
 
   const rowsHTML = items.length ? items.map(it=>{
-    return `<div class="cl-mgmt-row">`
-      + `<span class="lbl">${it.name}</span>`
-      + `<select data-id="${it.id}" aria-label="Emplacement de ${it.name}">${locationOptionsHTML(locations, it.location)}</select>`
-      + `</div>`;
+    return `<div class="cl-mgmt-item" data-id="${it.id}">`
+      + `<div class="cl-mgmt-actions">`
+        + `<button type="button" class="cl-mgmt-edit-btn" data-id="${it.id}" aria-label="Modifier ${it.name}">`
+          + `<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>`
+          + `Modifier`
+        + `</button>`
+        + `<button type="button" class="cl-mgmt-delete-btn" data-id="${it.id}" aria-label="Supprimer ${it.name}">`
+          + `<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6"/></svg>`
+          + `Supprimer`
+        + `</button>`
+      + `</div>`
+      + `<div class="cl-mgmt-row">`
+        + `<span class="lbl">${it.name}</span>`
+        + `<select data-id="${it.id}" aria-label="Emplacement de ${it.name}">${locationOptionsHTML(locations, it.location)}</select>`
+      + `</div>`
+    + `</div>`;
   }).join("") : '<div style="font-size:13px;color:var(--ink-soft);">Aucun objet pour le moment.</div>';
 
   const addFormHTML = `
@@ -1061,6 +1180,45 @@ function renderChecklistMgmt(){
       saveData();
       const loc = EQUIP_ITEMS.find(l=>l.id === newLocation);
       showToast(loc ? `Déplacé vers "${loc.title}" ✓` : "Emplacement mis à jour ✓");
+    });
+  });
+
+  checklistMgmtList.querySelectorAll(".cl-mgmt-item").forEach(itemEl=>{
+    attachSwipeHandlers(itemEl);
+  });
+
+  checklistMgmtList.querySelectorAll(".cl-mgmt-edit-btn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const equipItem = data.equipItems.find(it => it.id === btn.dataset.id);
+      if(!equipItem) return;
+      const newName = prompt("Nom de l'objet :", equipItem.name);
+      if(newName === null) return; // annulé
+      const trimmed = newName.trim();
+      if(!trimmed){
+        showToast("Le nom ne peut pas être vide");
+        return;
+      }
+      const clash = data.equipItems.find(it => it.id !== equipItem.id && it.name.toLowerCase() === trimmed.toLowerCase());
+      if(clash){
+        showToast("Un autre objet porte déjà ce nom");
+        return;
+      }
+      equipItem.name = trimmed;
+      saveData();
+      showToast("Objet modifié ✓");
+      renderChecklistMgmt();
+    });
+  });
+
+  checklistMgmtList.querySelectorAll(".cl-mgmt-delete-btn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const equipItem = data.equipItems.find(it => it.id === btn.dataset.id);
+      if(!equipItem) return;
+      if(!confirm(`Supprimer "${equipItem.name}" ?`)) return;
+      data.equipItems = data.equipItems.filter(it => it.id !== equipItem.id);
+      saveData();
+      showToast("Objet supprimé");
+      renderChecklistMgmt();
     });
   });
 
