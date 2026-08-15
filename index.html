@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Twiny">
-<title>Twiny 4.6 — Suivi Africa Twin</title>
+<title>Twiny 5.2 — Suivi Africa Twin</title>
 <style>
   :root{
     --hrc-red:#8C2430;
@@ -189,6 +189,30 @@
   .btn-secondary svg{width:14px;height:14px;stroke:var(--ink);fill:none;stroke-width:2.2;}
   .btn-secondary:active{opacity:0.7;}
   .backup-row{display:flex;gap:10px;margin-top:10px;}
+
+  .btn-checklist-mgmt{
+    width:100%;background:var(--hrc-blue);color:#fff;border:none;padding:13px 16px;
+    border-radius:14px;font-weight:700;font-size:13.5px;letter-spacing:0.3px;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    box-shadow:0 4px 14px rgba(21,84,214,0.35);margin-bottom:18px;font-family:inherit;
+  }
+  .btn-checklist-mgmt svg{width:16px;height:16px;stroke:#fff;fill:none;stroke-width:2.2;}
+  .btn-checklist-mgmt:active{opacity:0.85;}
+
+  .cl-mgmt-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line);gap:10px;}
+  .cl-mgmt-row:last-child{border-bottom:none;}
+  .cl-mgmt-row .lbl{font-size:14px;font-weight:600;flex:1;min-width:0;}
+  .cl-mgmt-row select{padding:8px 9px;border-radius:9px;border:1px solid var(--line);background:#FAFAF8;font-size:12.5px;font-family:inherit;color:var(--ink);flex:0 0 auto;max-width:52%;}
+
+  .cl-mgmt-add{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
+  .cl-mgmt-add .field{margin-bottom:10px;}
+  .cl-mgmt-add-btn{
+    width:100%;background:var(--ink);color:#fff;border:none;padding:13px 16px;
+    border-radius:14px;font-weight:700;font-size:13.5px;letter-spacing:0.3px;
+    display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit;
+  }
+  .cl-mgmt-add-btn svg{width:16px;height:16px;stroke:#fff;fill:none;stroke-width:2.4;}
+  .cl-mgmt-add-btn:active{opacity:0.85;}
 
   .settings-row{
     background:var(--panel);border-radius:var(--radius);border:1px solid var(--line);
@@ -417,6 +441,10 @@
 
   <!-- ================= PARAMETRES ================= -->
   <section id="page-parametres" class="page">
+    <button type="button" class="btn-checklist-mgmt" id="openChecklistMgmtBtn">
+      <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+      Check List
+    </button>
     <div class="section-title" style="margin-top:0;">Fréquences de contrôle</div>
     <div class="item-card" style="align-items:flex-start;margin-bottom:16px;">
       <div style="font-size:13px;color:var(--ink-soft);line-height:1.5;">
@@ -487,6 +515,18 @@
   </div>
 </div>
 
+<div class="overlay" id="checklistMgmtOverlay">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2>Check List</h2>
+    <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">
+      Tous les objets des listes, classés par ordre alphabétique. Change le rangement d'un objet : il est déplacé dans la nouvelle liste.
+    </div>
+    <div id="checklistMgmtList"></div>
+    <button class="btn-cancel" id="closeChecklistMgmtBtn">Fermer</button>
+  </div>
+</div>
+
 <script>
 const STORAGE_KEY = "twinny-data";
 
@@ -505,7 +545,7 @@ const ITEMS = [
 function defaultData(){
   const items = {};
   ITEMS.forEach(i => items[i.id] = {history:[], interval: i.interval ? {...i.interval} : null});
-  return {odometer:"", items, equipChecklist:{}, updatedAt: 0};
+  return {odometer:"", items, equipChecklist:{}, equipItems:[], updatedAt: 0};
 }
 
 /* Complète les données déjà sauvegardées si un point n'a pas encore d'intervalle défini
@@ -682,6 +722,43 @@ const EQUIP_CONTENT = {
   ]},
 };
 
+/* ---------------- Objets des listes (onglet Paramètres > Check List) ----------------
+   À partir de la version 5.1, la liste "réelle" et modifiable de chaque emplacement
+   est stockée dans data.equipItems (un objet par article, avec son emplacement actuel
+   et son état "prêt"). EQUIP_CONTENT ci-dessus ne sert plus que de contenu de départ :
+   au premier lancement après mise à jour, chaque article y est repris une seule fois
+   dans data.equipItems (en récupérant l'état "prêt" déjà enregistré), puis n'est plus
+   jamais retouché automatiquement — seul le menu déroulant de la Check List peut
+   ensuite changer son emplacement. */
+function slugifyEquipName(name){
+  return (name || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
+}
+
+function ensureEquipItems(){
+  if(!Array.isArray(data.equipItems)) data.equipItems = [];
+  const seenNames = new Set(data.equipItems.map(it=>it.name));
+  const usedIds = new Set(data.equipItems.map(it=>it.id));
+  EQUIP_ITEMS.forEach(loc=>{
+    const content = EQUIP_CONTENT[loc.id];
+    if(!content || !Array.isArray(content.list)) return;
+    content.list.forEach((name, idx)=>{
+      if(seenNames.has(name)) return;
+      seenNames.add(name);
+      const baseId = slugifyEquipName(name) || "item";
+      let id = baseId, n = 2;
+      while(usedIds.has(id)){ id = baseId + "-" + n; n++; }
+      usedIds.add(id);
+      let checked = false;
+      if(data.equipChecklist && Array.isArray(data.equipChecklist[loc.id]) && typeof data.equipChecklist[loc.id][idx] === "boolean"){
+        checked = data.equipChecklist[loc.id][idx];
+      }
+      data.equipItems.push({id, name, location: loc.id, checked});
+    });
+  });
+}
+ensureEquipItems();
+
 (function(){
   const container = document.getElementById("hotspotContainer");
   const overlay = document.getElementById("equipOverlay");
@@ -793,29 +870,32 @@ const EQUIP_CONTENT = {
     });
   }
 
-  function renderEquipList(id, items){
-    if(!data.equipChecklist) data.equipChecklist = {};
-    if(!Array.isArray(data.equipChecklist[id])) data.equipChecklist[id] = items.map(()=>false);
-    const state = data.equipChecklist[id];
-    // Si la liste a changé de longueur (mise à jour de l'app), on ajuste sans perdre l'existant.
-    while(state.length < items.length) state.push(false);
-    state.length = items.length;
+  function renderEquipList(id){
+    // La liste affichée pour cet emplacement vient désormais de data.equipItems
+    // (modifiable depuis Paramètres > Check List), et non plus d'EQUIP_CONTENT
+    // qui ne sert que de contenu de départ.
+    const items = data.equipItems.filter(it => it.location === id);
 
-    bodyEl.innerHTML = '<ul class="equip-list">' + items.map((label, idx)=>{
-      const isChecked = !!state[idx];
+    if(!items.length){
+      bodyEl.textContent = "À compléter.";
+      return;
+    }
+
+    bodyEl.innerHTML = '<ul class="equip-list">' + items.map(it=>{
+      const isChecked = !!it.checked;
       return `<li class="${isChecked ? "checked" : ""}">`
-        + `<button type="button" class="equip-check${isChecked ? " checked" : ""}" data-idx="${idx}" aria-label="Marquer ${label} comme prêt"></button>`
-        + `<span>${label}</span>`
+        + `<button type="button" class="equip-check${isChecked ? " checked" : ""}" data-id="${it.id}" aria-label="Marquer ${it.name} comme prêt"></button>`
+        + `<span>${it.name}</span>`
         + `</li>`;
     }).join("") + '</ul>';
 
     bodyEl.querySelectorAll(".equip-check").forEach(btn=>{
       btn.addEventListener("click", ()=>{
-        const idx = Number(btn.dataset.idx);
-        const nowChecked = !data.equipChecklist[id][idx];
-        data.equipChecklist[id][idx] = nowChecked;
-        btn.classList.toggle("checked", nowChecked);
-        btn.closest("li").classList.toggle("checked", nowChecked);
+        const equipItem = data.equipItems.find(it => it.id === btn.dataset.id);
+        if(!equipItem) return;
+        equipItem.checked = !equipItem.checked;
+        btn.classList.toggle("checked", equipItem.checked);
+        btn.closest("li").classList.toggle("checked", equipItem.checked);
         saveData();
       });
     });
@@ -825,12 +905,7 @@ const EQUIP_CONTENT = {
     const item = EQUIP_ITEMS.find(i=>i.id === id);
     if(!item) return;
     titleEl.textContent = item.title;
-    const content = EQUIP_CONTENT[id];
-    if(content && content.list){
-      renderEquipList(id, content.list);
-    } else {
-      bodyEl.textContent = "À compléter.";
-    }
+    renderEquipList(id);
     overlay.classList.add("show");
   }
 
@@ -919,6 +994,118 @@ const EQUIP_CONTENT = {
     });
   }
 })();
+
+/* ---------------- CHECK LIST (gestion des emplacements, onglet Paramètres) ----------------
+   Vue d'ensemble de tous les objets de toutes les listes (data.equipItems), triés par
+   ordre alphabétique, avec un menu déroulant pour changer l'emplacement de chacun.
+   Changer le menu déroulant déplace l'objet dans la liste de son nouvel emplacement,
+   visible ensuite dans l'onglet "Check list" (photo avec points cliquables). */
+const checklistMgmtOverlay = document.getElementById("checklistMgmtOverlay");
+const checklistMgmtList = document.getElementById("checklistMgmtList");
+
+function equipLocationsSorted(){
+  return EQUIP_ITEMS.slice().sort((a,b)=> a.title.localeCompare(b.title, "fr", {sensitivity:"base"}));
+}
+
+function locationOptionsHTML(locations, selectedId){
+  return locations.map(loc=>
+    `<option value="${loc.id}"${loc.id === selectedId ? " selected" : ""}>${loc.title}</option>`
+  ).join("");
+}
+
+function renderChecklistMgmt(){
+  const locations = equipLocationsSorted();
+  const items = data.equipItems.slice().sort((a,b)=> a.name.localeCompare(b.name, "fr", {sensitivity:"base"}));
+
+  const rowsHTML = items.length ? items.map(it=>{
+    return `<div class="cl-mgmt-row">`
+      + `<span class="lbl">${it.name}</span>`
+      + `<select data-id="${it.id}" aria-label="Emplacement de ${it.name}">${locationOptionsHTML(locations, it.location)}</select>`
+      + `</div>`;
+  }).join("") : '<div style="font-size:13px;color:var(--ink-soft);">Aucun objet pour le moment.</div>';
+
+  const addFormHTML = `
+    <div class="cl-mgmt-add">
+      <div class="field">
+        <label>Nouvel objet</label>
+        <input type="text" id="clMgmtNewName" placeholder="Nom de l'objet" maxlength="60">
+      </div>
+      <div class="field">
+        <label>Emplacement</label>
+        <select id="clMgmtNewLoc">${locationOptionsHTML(locations)}</select>
+      </div>
+      <button type="button" class="cl-mgmt-add-btn" id="clMgmtAddBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        Ajouter
+      </button>
+    </div>
+  `;
+
+  checklistMgmtList.innerHTML = rowsHTML + addFormHTML;
+
+  checklistMgmtList.querySelectorAll(".cl-mgmt-row select").forEach(sel=>{
+    sel.addEventListener("change", ()=>{
+      const equipItem = data.equipItems.find(it => it.id === sel.dataset.id);
+      if(!equipItem) return;
+      const newLocation = sel.value;
+      if(newLocation === equipItem.location) return;
+      equipItem.location = newLocation;
+      // Déplace l'article en fin de tableau : l'ordre d'affichage de chaque
+      // liste (onglet Check list) suit l'ordre du tableau data.equipItems,
+      // l'objet apparaît donc en dernier dans sa nouvelle liste.
+      const idx = data.equipItems.indexOf(equipItem);
+      if(idx > -1){
+        data.equipItems.splice(idx, 1);
+        data.equipItems.push(equipItem);
+      }
+      saveData();
+      const loc = EQUIP_ITEMS.find(l=>l.id === newLocation);
+      showToast(loc ? `Déplacé vers "${loc.title}" ✓` : "Emplacement mis à jour ✓");
+    });
+  });
+
+  const nameInput = document.getElementById("clMgmtNewName");
+  const locSelect = document.getElementById("clMgmtNewLoc");
+  const addBtn = document.getElementById("clMgmtAddBtn");
+
+  function addNewEquipItem(){
+    const name = (nameInput.value || "").trim();
+    if(!name){
+      showToast("Indique un nom d'objet");
+      nameInput.focus();
+      return;
+    }
+    if(data.equipItems.some(it => it.name.toLowerCase() === name.toLowerCase())){
+      showToast("Cet objet existe déjà");
+      return;
+    }
+    const baseId = slugifyEquipName(name) || "item";
+    const usedIds = new Set(data.equipItems.map(it=>it.id));
+    let id = baseId, n = 2;
+    while(usedIds.has(id)){ id = baseId + "-" + n; n++; }
+    data.equipItems.push({id, name, location: locSelect.value, checked:false});
+    saveData();
+    showToast("Objet ajouté ✓");
+    // Le nouvel objet reprend sa place alphabétique dans la liste au
+    // prochain rendu, formulaire vidé au passage.
+    renderChecklistMgmt();
+  }
+
+  addBtn.addEventListener("click", addNewEquipItem);
+  nameInput.addEventListener("keydown", (e)=>{
+    if(e.key === "Enter"){ e.preventDefault(); addNewEquipItem(); }
+  });
+}
+
+function openChecklistMgmt(){
+  renderChecklistMgmt();
+  checklistMgmtOverlay.classList.add("show");
+}
+function closeChecklistMgmt(){ checklistMgmtOverlay.classList.remove("show"); }
+
+document.getElementById("openChecklistMgmtBtn").addEventListener("click", openChecklistMgmt);
+document.getElementById("closeChecklistMgmtBtn").addEventListener("click", closeChecklistMgmt);
+checklistMgmtOverlay.addEventListener("click", (e)=>{ if(e.target === checklistMgmtOverlay) closeChecklistMgmt(); });
 
 /* ---------------- RENDER CHECKLIST ---------------- */
 const container = document.getElementById("itemsContainer");
@@ -1533,11 +1720,13 @@ async function connectDrive(interactive){
 
         if(shouldPullRemote){
           data = migrateData(remoteData);
+          ensureEquipItems();
           saveData(false); // on garde l'horodatage d'origine, pas de ré-envoi immédiat vers Drive
           odoInput.value = data.odometer || "";
           renderItems();
           updateHomeStats();
           renderSettings();
+          if(typeof renderChecklistMgmt === "function") renderChecklistMgmt();
           if(remoteDocs.length && docDB){
             for(const doc of remoteDocs) await docPut(doc);
             renderDocuments();
@@ -1625,6 +1814,7 @@ document.getElementById("importInput").addEventListener("change", (e)=>{
       }
 
       data = migrateData(importedData);
+      ensureEquipItems();
       // Un import manuel est une action volontaire : on la traite comme la donnée
       // la plus récente pour que Drive et l'autre appareil s'alignent dessus.
       saveData(true);
@@ -1632,6 +1822,7 @@ document.getElementById("importInput").addEventListener("change", (e)=>{
       renderItems();
       updateHomeStats();
       renderSettings();
+      if(typeof renderChecklistMgmt === "function") renderChecklistMgmt();
 
       if(importedDocs.length && docDB){
         for(const doc of importedDocs){
