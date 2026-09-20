@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Twiny">
-<title>Twiny 5.3 — Suivi Africa Twin</title>
+<title>Twiny 5.4 — Suivi Africa Twin</title>
 <style>
   :root{
     --hrc-red:#8C2430;
@@ -111,7 +111,14 @@
     background:var(--bg);border:none;display:flex;align-items:center;justify-content:center;
     font-size:16px;color:var(--ink-soft);
   }
-  .equip-modal h3{margin:0 26px 10px 0;font-family:'Oswald',sans-serif;font-size:18px;letter-spacing:0.3px;}
+  .equip-modal .equip-reset{
+    position:absolute;top:12px;right:50px;width:30px;height:30px;border-radius:50%;
+    background:var(--bg);border:none;display:flex;align-items:center;justify-content:center;
+    color:var(--ink-soft);
+  }
+  .equip-modal .equip-reset svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2.2;}
+  .equip-modal .equip-reset:active{opacity:0.7;}
+  .equip-modal h3{margin:0 64px 10px 0;font-family:'Oswald',sans-serif;font-size:18px;letter-spacing:0.3px;}
   .equip-modal .equip-body{font-size:13.5px;color:var(--ink-soft);line-height:1.5;}
   .equip-modal .equip-body:empty{display:none;}
   .equip-list{
@@ -454,6 +461,9 @@
 
 <div class="equip-overlay" id="equipOverlay">
   <div class="equip-modal">
+    <button class="equip-reset" id="equipResetBtn" aria-label="Réinitialiser la liste">
+      <svg viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+    </button>
     <button class="equip-close" id="equipCloseBtn">✕</button>
     <h3 id="equipTitle">Équipement</h3>
     <div class="equip-body" id="equipBody">À compléter.</div>
@@ -694,6 +704,8 @@ const EQUIP_CONTENT = {
     "Produit visière",
     "Microfibre",
     "Basket",
+    "Séchoir",
+    "Cintres",
   ]},
   "case-l": { list: [
     "Nettoyant chaîne",
@@ -787,6 +799,7 @@ ensureEquipItems();
   const bodyEl = document.getElementById("equipBody");
   const bg = document.getElementById("checklistBg");
   let hotspotEls = [];
+  let currentEquipId = null;
 
   function renderHotspots(){
     container.innerHTML = "";
@@ -925,14 +938,26 @@ ensureEquipItems();
   function openEquip(id){
     const item = EQUIP_ITEMS.find(i=>i.id === id);
     if(!item) return;
+    currentEquipId = id;
     titleEl.textContent = item.title;
     renderEquipList(id);
     overlay.classList.add("show");
   }
 
-  function closeEquip(){ overlay.classList.remove("show"); }
+  function closeEquip(){ overlay.classList.remove("show"); currentEquipId = null; }
 
   document.getElementById("equipCloseBtn").addEventListener("click", closeEquip);
+  document.getElementById("equipResetBtn").addEventListener("click", ()=>{
+    if(!currentEquipId) return;
+    const items = data.equipItems.filter(it => it.location === currentEquipId);
+    if(!items.length) return;
+    const item = EQUIP_ITEMS.find(i=>i.id === currentEquipId);
+    if(!confirm(`Réinitialiser la liste "${item ? item.title : ""}" ?`)) return;
+    items.forEach(it => it.checked = false);
+    saveData();
+    renderEquipList(currentEquipId);
+    showToast("Liste réinitialisée");
+  });
   overlay.addEventListener("click", (e)=>{ if(e.target === overlay) closeEquip(); });
 
   renderHotspots();
